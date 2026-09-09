@@ -22,35 +22,76 @@ const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const NODE_ENV = process.env.NODE_ENV || "development";
 
-// SECURITY: CORS configuration
+// ============================================================================
+// SECURITY: CORS Configuration
+// ============================================================================
+const corsOriginsList = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((origin) => origin.trim())
+  : ["http://localhost:3000", "http://localhost:5173"];
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN?.split(",") || ["http://localhost:3000", "http://localhost:5173"],
+  origin: corsOriginsList,
   credentials: true,
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  maxAge: 86400, // 24 hours
 };
+
+// Log CORS configuration in development
+if (NODE_ENV !== "production") {
+  console.log("[CORS] Allowed origins:", corsOriginsList);
+}
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "10mb" }));
 
+// ============================================================================
+// SECURITY: Request logging middleware (for debugging & audit)
+// ============================================================================
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const logLevel = res.statusCode >= 400 ? "warn" : "log";
+    console[logLevel as keyof typeof console](
+      `[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`
+    );
+  });
+  next();
+});
+
+// ============================================================================
 // SECURITY: Rate limiting for expensive AI endpoints
+// ============================================================================
 const aiRateLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: process.env.RATE_LIMIT_AI ? parseInt(process.env.RATE_LIMIT_AI, 10) : 10,
   message: "Too many resume generation requests. Please wait a moment before trying again.",
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => NODE_ENV === "development", // Skip rate limiting in development
 });
 
-// Health check
+// ============================================================================
+// HEALTH CHECK ENDPOINT
+// ============================================================================
 app.get("/api/health", (req: Request, res: Response) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: NODE_ENV,
+  });
 });
 
-// Sham Cash Payment Gateway routes
+// ============================================================================
+// PAYMENT GATEWAY ROUTES
+// ============================================================================
 app.use("/api/shamcash", shamCashRouter);
 
-// Endpoint: Generate ATS-Optimized Resume
+// ============================================================================
+// ENDPOINT: Generate ATS-Optimized Resume
+// ============================================================================
 app.post(
   "/api/resume/generate",
   aiRateLimiter,
@@ -61,17 +102,16 @@ app.post(
 
     try {
       const systemInstruction = `
-أنت خبير ومستشار مهني رفيع المستوى ونظام ذكاء اصطناعي متخصص في بناء السير الذاتية الاحترافية المتوافقة تماماً مع أنظمة الفرز الآلي ATS ومسؤولي التوظيف البشريين.
+أنت خبير ومستشار مهني رفيع المستوى ونظام ذكاء اصطناعي متخصص في بناء السير الذاتية الاحترافية المتوافقة تماماً مع معايير نظم فحص السير الذاتية الآلية (ATS).
 
 المهمة الأساسية:
-تحويل المعلومات الخام للمستخدم إلى سيرة ذاتية مصممة لتجاوز أنظمة ATS وإقناع المسؤول عن التوظيف البشري، مع رسالة تغطية مخصصة وتقرير تدقيق ATS شامل.
+تحويل المعلومات الخام للمستخدم إلى سيرة ذاتية مصممة لتجاوز أنظمة ATS وإقناع المسؤول عن التوظيف البشري، مع رسالة تغطية احترافية واستعراض ATS شامل.
 
 يجب تنفيذ الخطوات التالية بدقة وبالترتيب الإلزامي:
-1. استخرج الكلمات المفتاحية من وصف الوظيفة المستهدفة (المهارات الصلبة، المهارات الناعمة، الأدوات، التقنيات).
+1. استخرج الكلمات المفتاحية من وصف الوظيفة المستهدفة (المهارات الصلبة، المهارات الناعمة، الأدوات، التقنيات، الشهادات).
 2. أعد صياغة خبرات المستخدم بلغة تتوافق مع تلك الكلمات المفتاحية المستخرجة.
-3. احسب الإنجازات بأرقام ونسب مئوية ومقاييس قابلة للقياس كلما أمكن (حتى لو كانت المعلومات الخام غير مرقمة بدقة).
-4. رتب الأقسام حسب أولوية الوظيفة المستهدفة:
-   الترتيب المعتمد للإخراج هو: ملخص مهني | خبرات عملية | مهارات | تعليم.
+3. احسب الإنجازات بأرقام ونسب مئوية ومقاييس قابلة للقياس كلما أمكن.
+4. رتب الأقسام حسب أولوية الوظيفة المستهدفة: ملخص مهني | خبرات عملية | مهارات | تعليم.
 5. اكتب ملخصاً مهنياً مكثفاً لا يتجاوز 4 أسطر يجمع أبرز نقاط القوة والقيمة المضافة.
 
 قواعد الكتابة الإلزامية:
@@ -163,7 +203,7 @@ ${rawUserInfo.rawNotes || JSON.stringify(rawUserInfo)}
 
         return res.json({
           success: true,
-          notice: "تم بناء السيرة الذاتية ورسالة التغطية بنجاح وفق معايير ATS الصارمة عبر المعالج الذكي الاحتياطي نظراً لضغط الخوادم الحالي. قد تحتاج الأرقام والإحصائيات إلى مراجعة يدوية.",
+          notice: "تم بناء السيرة الذا��ية ورسالة التغطية بنجاح وفق معايير ATS الصارمة عبر المعالج الذكي الاحتياطي نظراً لقيود الـ API الحالية.",
           ...fallbackResult,
         });
       }
@@ -176,7 +216,9 @@ ${rawUserInfo.rawNotes || JSON.stringify(rawUserInfo)}
   }
 );
 
-// Endpoint: Improve single bullet point
+// ============================================================================
+// ENDPOINT: Improve single bullet point
+// ============================================================================
 app.post(
   "/api/resume/improve-bullet",
   aiRateLimiter,
@@ -235,7 +277,9 @@ app.post(
   }
 );
 
-// Endpoint: Extract keywords from job description
+// ============================================================================
+// ENDPOINT: Extract keywords from job description
+// ============================================================================
 app.post(
   "/api/resume/extract-keywords",
   aiRateLimiter,
@@ -300,7 +344,30 @@ ${targetJobDescription}
   }
 );
 
-// Vite middleware for development & static serving for production
+// ============================================================================
+// ERROR HANDLING MIDDLEWARE
+// ============================================================================
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  console.error("[Error Handler]", err);
+
+  if (err instanceof z.ZodError) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation error",
+      errors: err.errors,
+    });
+  }
+
+  res.status(500).json({
+    success: false,
+    message: "Internal server error",
+    ...(NODE_ENV === "development" && { error: err.message }),
+  });
+});
+
+// ============================================================================
+// START SERVER
+// ============================================================================
 async function startServer(): Promise<void> {
   if (NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -317,7 +384,14 @@ async function startServer(): Promise<void> {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`ATS Resume Platform Server running on port ${PORT} (${NODE_ENV} mode)`);
+    console.log(`
+╔════════════════════════════════════════════════╗
+║   ATS Resume Builder Platform                  ║
+║   Environment: ${NODE_ENV.toUpperCase().padEnd(28)} ║
+║   Port: ${PORT.toString().padEnd(38)} ║
+║   Uptime: Ready                                ║
+╚════════════════════════════════════════════════╝
+    `);
   });
 }
 
