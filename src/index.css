@@ -11,6 +11,22 @@
     font-feature-settings: "liga" 1, "kern" 1;
     text-rendering: optimizeLegibility;
   }
+
+  /* Explicitly set form text colors so typed content remains visible across browsers */
+  input,
+  textarea,
+  select {
+    color: #0f172a;
+    -webkit-text-fill-color: #0f172a;
+    caret-color: #0f172a;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #94a3b8;
+    -webkit-text-fill-color: #94a3b8;
+    opacity: 1;
+  }
 }
 
 @media print {
