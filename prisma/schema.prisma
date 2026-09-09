@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  id            String   @id @default(cuid())
+  merchantId    String
+  customerId    String
+  customerEmail String
+  amount        Float
+  currency      String   @default("USD")
+  status        String   @default("pending")
+  shamcashId    String?
+  transactionId String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  expiresAt     DateTime @default(dbgenerated("CURRENT_TIMESTAMP + INTERVAL '24 hours'"))
+  completedAt   DateTime?
+
+  @@index([customerId, status])
+  @@index([status, expiresAt])
+  @@index([shamcashId])
+  @@index([transactionId])
+  @@map("orders")
+}
+
+model ResumeGenerationLog {
+  id                    String   @id @default(cuid())
+  targetJobTitle        String
+  targetCompany         String?
+  targetJobDescription  String?
+  userEmail             String?
+  language              String   @default("en")
+  usedModel             String?
+  generationTime        Int?
+  generatedResume       Json?
+  generatedCoverLetter  Json?
+  atsReview             Json?
+  createdAt             DateTime @default(now())
+
+  @@index([userEmail])
+  @@index([createdAt])
+  @@map("resume_generation_logs")
+}
+
+model ApiUsageLog {
+  id           String   @id @default(cuid())
+  identifier   String
+  endpoint     String
+  method       String
+  statusCode   Int
+  responseTime Int?
+  createdAt    DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@index([endpoint, createdAt])
+  @@index([statusCode])
+  @@map("api_usage_logs")
+}
