@@ -1,0 +1,6 @@
+{
+  "name": "منصة بناء السيرة الذاتية الاحترافية ATS",
+  "description": "منصة ذكاء اصطناعي متخصصة في تحويل المعلومات الخام إلى سيرة ذاتية ورسالة تغطية محسّنة لأنظمة ATS بمؤشرات رقمية وأفعال قوية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
