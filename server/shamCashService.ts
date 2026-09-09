@@ -16,20 +16,51 @@ export interface ShamCashOrder {
   deepLinkUrl: string;
 }
 
-// In-memory store for payment orders (resilient for container lifecycle)
+// In-memory store for payment orders (should be migrated to Redis/SQLite)
 const ordersStore = new Map<string, ShamCashOrder>();
 
-// Default configuration for Sham Cash merchant profile
-// Supports environment variables SHAMCASH_MERCHANT_ID / SHAMCASH_SECRET_KEY if provided
+// SECURITY: Configuration with mandatory env vars - no fallback defaults
 const SHAM_CASH_CONFIG = {
-  merchantId: process.env.SHAMCASH_MERCHANT_ID || "SHAM_ATS_77921",
+  merchantId: process.env.SHAMCASH_MERCHANT_ID,
   merchantName: "منصة السيرة الذاتية الذكية ATS",
-  pricePerResumeSYP: 250, // 250 Syrian Pounds per resume
-  secretKey: process.env.SHAMCASH_SECRET_KEY || "shamcash_secret_key_prod_88291",
+  pricePerResumeSYP: 250,
+  secretKey: process.env.SHAMCASH_SECRET_KEY,
   defaultPhone: "0991234567",
 };
 
+// SECURITY: Validate environment variables on startup
+if (!SHAM_CASH_CONFIG.secretKey || !SHAM_CASH_CONFIG.merchantId) {
+  console.warn(
+    "WARNING: SHAMCASH_SECRET_KEY or SHAMCASH_MERCHANT_ID not set. Payment features will not work securely."
+  );
+}
+
 export const shamCashRouter = express.Router();
+
+/**
+ * SECURITY: Verify HMAC signature of webhook
+ * @param body - Request body
+ * @param signature - HMAC signature from request
+ * @returns true if signature is valid
+ */
+function verifyWebhookSignature(body: any, signature: string): boolean {
+  if (!SHAM_CASH_CONFIG.secretKey || !signature) {
+    console.warn("Webhook verification failed: missing secret key or signature");
+    return false;
+  }
+
+  // Create canonical payload string (order matters)
+  const canonicalString = `${body.orderId}:${body.shamCashTxnId || ""}:${body.status || "paid"}:${SHAM_CASH_CONFIG.merchantId}`;
+
+  // Compute HMAC-SHA256
+  const expectedSignature = crypto
+    .createHmac("sha256", SHAM_CASH_CONFIG.secretKey)
+    .update(canonicalString)
+    .digest("hex");
+
+  // Constant-time comparison to prevent timing attacks
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+}
 
 /**
  * GET /api/shamcash/config
@@ -51,25 +82,15 @@ shamCashRouter.get("/config", (req, res) => {
  * Creates a new invoice order of 250 SYP with dynamic QR code & Deep Link
  */
 shamCashRouter.post("/create-order", (req, res) => {
-  const {
-    jobTitle = "سيرة ذاتية متوافقة مع ATS",
-    customerName = "مستخدم شام كاش",
-    customerPhone = "",
-  } = req.body || {};
+  const { jobTitle = "سيرة ذاتية متوافقة مع ATS", customerName = "مستخدم شام كاش", customerPhone = "" } = req.body || {};
 
   const orderId = `SHAM-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-  const amountSYP = SHAM_CASH_CONFIG.pricePerResumeSYP; // exactly 250 SYP
+  const amountSYP = SHAM_CASH_CONFIG.pricePerResumeSYP;
 
-  // Sham Cash Payload Structure for QR / App Invoicing
-  // Standard format for Sham Cash e-wallet QR readers:
-  // shamcash://pay?merchantId=...&orderId=...&amount=250&currency=SYP
   const deepLinkUrl = `shamcash://pay?merchantId=${encodeURIComponent(
-    SHAM_CASH_CONFIG.merchantId
-  )}&orderId=${orderId}&amount=${amountSYP}&currency=SYP&desc=${encodeURIComponent(
-    `إنشاء سيرة ذاتية - ${jobTitle}`
-  )}`;
+    SHAM_CASH_CONFIG.merchantId || ""
+  )}&orderId=${orderId}&amount=${amountSYP}&currency=SYP&desc=${encodeURIComponent(`إنشاء سيرة ذاتية - ${jobTitle}`)}`;
 
-  // Standard payload stored in QR code
   const qrDataString = JSON.stringify({
     provider: "ShamCash",
     merchant: SHAM_CASH_CONFIG.merchantName,
@@ -125,10 +146,20 @@ shamCashRouter.get("/status/:orderId", (req, res) => {
 
 /**
  * POST /api/shamcash/webhook
- * Automatic server-to-server callback simulation / real webhook from Sham Cash
+ * SECURITY: Server-to-server webhook with HMAC signature verification
+ * Rejects any webhook without valid signature
  */
 shamCashRouter.post("/webhook", (req, res) => {
   const { orderId, shamCashTxnId, status = "paid", signature } = req.body || {};
+
+  // SECURITY: Verify HMAC signature BEFORE processing
+  if (!verifyWebhookSignature({ orderId, shamCashTxnId, status }, signature)) {
+    console.error(`[SECURITY] Webhook signature verification failed for orderId: ${orderId}`);
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized: Invalid webhook signature",
+    });
+  }
 
   if (!orderId || !ordersStore.has(orderId)) {
     return res.status(404).json({ success: false, message: "Order not found" });
@@ -150,10 +181,20 @@ shamCashRouter.post("/webhook", (req, res) => {
 
 /**
  * POST /api/shamcash/confirm-manual
- * Allows client confirmation (e.g. user entered transaction code or verified via Sham Cash app)
+ * SECURITY: HMAC verification required - cannot accept payment confirmation without signature
+ * Client confirmation endpoint with signature verification
  */
 shamCashRouter.post("/confirm-manual", (req, res) => {
-  const { orderId, transactionId } = req.body || {};
+  const { orderId, transactionId, signature } = req.body || {};
+
+  // SECURITY: Verify signature for client-initiated confirmation
+  if (!verifyWebhookSignature({ orderId, shamCashTxnId: transactionId, status: "paid" }, signature)) {
+    console.error(`[SECURITY] Manual confirmation signature verification failed for orderId: ${orderId}`);
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized: Invalid confirmation signature",
+    });
+  }
 
   if (!orderId || !ordersStore.has(orderId)) {
     return res.status(404).json({
