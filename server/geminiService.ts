@@ -12,7 +12,7 @@ export function getAiClient(): GoogleGenAI {
       apiKey,
       httpOptions: {
         headers: {
-          'User-Agent': 'aistudio-build',
+          "User-Agent": "aistudio-build",
         },
       },
     });
@@ -27,17 +27,18 @@ interface GenerateWithRetryOptions {
 }
 
 /**
- * Executes generateContent with automatic retry and model fallback:
+ * FIXED: Executes generateContent with automatic retry and model fallback
  * Handles 503 (High demand / UNAVAILABLE), 429 (Rate limiting), and transient errors.
- * Tries models: gemini-3.1-flash-lite -> gemini-flash-latest -> gemini-3.8-flash.
+ * Uses CORRECT model names: gemini-2.0-flash (latest), gemini-1.5-flash (stable), gemini-2.0-flash-lite (lightweight)
  */
 export async function generateContentWithRetry(options: GenerateWithRetryOptions) {
   const ai = getAiClient();
+  // FIXED: Using correct, up-to-date model names from Gemini API
   const models = [
-    options.preferredModel || "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
-    "gemini-3.8-flash",
+    options.preferredModel || "gemini-2.0-flash",
+    "gemini-2.0-flash", // Latest and most capable
+    "gemini-1.5-flash", // Stable fallback
+    "gemini-2.0-flash-lite", // Lightweight fallback
   ];
   const uniqueModels = Array.from(new Set(models));
 
